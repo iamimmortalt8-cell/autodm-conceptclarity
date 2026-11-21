@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { graphId, graphRequest } from "./graph";
+import { graphId, graphRequest, type GraphAuthOptions } from "./graph";
 
 /**
  * Reading a post's comments (`GET /{ig-media-id}/comments`, Instagram API with Instagram Login) for
@@ -115,6 +115,7 @@ export async function fetchRecentComments(params: {
   mediaId: string;
   since: Date;
   maxPages?: number;
+  graphOptions?: GraphAuthOptions;
 }): Promise<{ comments: FetchedComment[]; pages: number; truncated: boolean }> {
   const maxPages = Math.max(1, params.maxPages ?? COMMENTS_MAX_PAGES);
   const comments: FetchedComment[] = [];
@@ -124,6 +125,7 @@ export async function fetchRecentComments(params: {
     const page: CommentsPage = await graphRequest({
       path: `/${encodeURIComponent(params.mediaId)}/comments`,
       accessToken: params.accessToken,
+      ...params.graphOptions,
       query: { fields: COMMENTS_FIELDS, limit: COMMENTS_PAGE_LIMIT, after: after ?? undefined },
       schema: commentsPageSchema,
     });

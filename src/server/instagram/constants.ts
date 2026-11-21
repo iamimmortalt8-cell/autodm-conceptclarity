@@ -11,6 +11,13 @@ export const GRAPH_API_VERSION = "v25.0";
 export const GRAPH_HOST = "https://graph.instagram.com";
 export const GRAPH_BASE_URL = `${GRAPH_HOST}/${GRAPH_API_VERSION}`;
 
+/** Unified Login Graph endpoints documented by Meta for API v27.0. */
+export const UNIFIED_GRAPH_API_VERSION = "v27.0";
+export const UNIFIED_GRAPH_HOST = "https://graph.facebook.com";
+export const UNIFIED_GRAPH_BASE_URL = UNIFIED_GRAPH_HOST + "/" + UNIFIED_GRAPH_API_VERSION;
+export const UNIFIED_LOGIN_URL = "https://www.facebook.com/dialog/oauth";
+export const UNIFIED_TOKEN_URL = UNIFIED_GRAPH_BASE_URL + "/oauth/access_token";
+
 /** Authorization dialog (user-facing). */
 export const IG_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
 /** Code -> short-lived token exchange (note: api.instagram.com, not graph). */
@@ -25,6 +32,14 @@ export const IG_SCOPES = [
   "instagram_business_manage_comments",
   "instagram_business_manage_messages",
 ] as const;
+
+import type { InstagramApiSetup } from "@/server/db/schema";
+
+export function graphAuthForSetup(apiSetup?: InstagramApiSetup | null) {
+  return apiSetup === "unified_login"
+    ? { baseUrl: UNIFIED_GRAPH_BASE_URL, tokenTransport: "bearer" as const }
+    : {};
+}
 
 /** Meta limit for Private Reply / DM text. */
 export const DM_MAX_CHARS = 1000;

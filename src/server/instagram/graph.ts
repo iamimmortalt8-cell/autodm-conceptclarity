@@ -110,12 +110,21 @@ function errorFromBody(status: number, body: unknown): GraphApiError {
 
 type QueryValue = string | number | boolean | undefined | null;
 
+export type GraphAuthOptions = {
+  baseUrl?: string;
+  tokenTransport?: "query" | "bearer";
+};
+
 export interface GraphRequestOptions<T> {
   method?: "GET" | "POST" | "DELETE";
   /** Path relative to the versioned Graph base (e.g. `/me/media`) or an absolute https URL. */
   path: string;
-  /** Sent as the `access_token` query parameter (documented for every IG Login endpoint). */
+  /** Access token. Unified Login requests use an Authorization bearer header. */
   accessToken?: string;
+  /** Per-account Graph API base URL; defaults to graph.instagram.com. */
+  baseUrl?: string;
+  /** Legacy Instagram Login uses query transport; Unified Login uses bearer. */
+  tokenTransport?: "query" | "bearer";
   query?: Record<string, QueryValue>;
   /** application/x-www-form-urlencoded body. */
   form?: Record<string, QueryValue>;
@@ -142,14 +151,16 @@ function buildUrl(
   path: string,
   query: Record<string, QueryValue> | undefined,
   token: string | undefined,
+  baseUrl: string | undefined,
+  tokenTransport: "query" | "bearer" | undefined,
 ): URL {
   const url = /^https:\/\//.test(path)
     ? new URL(path)
-    : new URL(GRAPH_BASE_URL + (path.startsWith("/") ? path : `/${path}`));
+    : new URL((baseUrl ?? GRAPH_BASE_URL) + (path.startsWith("/") ? path : "/" + path));
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   }
-  if (token) url.searchParams.set("access_token", token);
+  if (token && tokenTransport !== "bearer") url.searchParams.set("access_token", token);
   return url;
 }
 
@@ -177,7 +188,7 @@ export async function graphRequest<T>(opts: GraphRequestOptions<T>): Promise<T> 
   const method = opts.method ?? "GET";
   const retries = Math.max(0, opts.retries ?? 2);
   const idempotent = opts.idempotent ?? method === "GET";
-  const url = buildUrl(opts.path, opts.query, opts.accessToken);
+  const url = buildUrl(opts.path, opts.query, opts.accessToken, opts.baseUrl, opts.tokenTransport);
   // Log-safe identifier: path only, never the query string (it carries the token/secret).
   const logPath = /^https:\/\//.test(opts.path) ? new URL(opts.path).pathname : opts.path;
   const fail = (err: GraphApiError, attempts: number): GraphApiError => {
@@ -202,6 +213,10 @@ export async function graphRequest<T>(opts: GraphRequestOptions<T>): Promise<T> 
   } else if (opts.json !== undefined) {
     body = JSON.stringify(opts.json);
     headers["Content-Type"] = "application/json";
+  }
+
+  if (opts.accessToken && opts.tokenTransport === "bearer") {
+    headers.Authorization = "Bearer " + opts.accessToken;
   }
 
   for (let attempt = 0; ; attempt++) {

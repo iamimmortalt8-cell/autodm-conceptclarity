@@ -29,6 +29,8 @@ const TABS = ["account", "instagram", "processing", "n8n", "about"] as const;
 
 const OAUTH_ERRORS: Record<string, string> = {
   missing_app_credentials: "Add your Meta App ID and App Secret first.",
+  instagram_account_missing: "The approved login did not grant an Instagram professional account. Check your Meta login configuration.",
+  multiple_instagram_accounts: "AutoDM supports one connected Instagram account. Configure the Meta login to authorize exactly one account, then reconnect.",
   access_denied: "Instagram authorization was cancelled.",
   invalid_state: "The connection request expired or was tampered with. Please try again.",
   missing_code: "Instagram didn't return an authorization code. Please try again.",
@@ -113,6 +115,7 @@ export default async function SettingsPage({
           <InstagramTab
             appId={settings["meta.appId"].value ?? ""}
             appSecretConfigured={settings["meta.appSecret"].configured}
+            configId={settings["meta.configId"].value ?? ""}
             account={
               account
                 ? {
@@ -120,6 +123,7 @@ export default async function SettingsPage({
                     name: account.name,
                     profilePictureUrl: account.profilePictureUrl,
                     tokenExpiresAt: account.tokenExpiresAt,
+                    apiSetup: account.apiSetup,
                     tokenDaysLeft: account.tokenExpiresAt ? daysUntil(account.tokenExpiresAt) : null,
                   }
                 : null

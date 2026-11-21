@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { truncateText } from "@/server/engine/template";
 import { BUTTON_TEMPLATE_TEXT_MAX, BUTTON_TITLE_MAX, COMMENT_MAX_CHARS, DM_MAX_CHARS } from "./constants";
-import { GraphApiError, graphId, graphRequest } from "./graph";
+import { GraphApiError, graphId, graphRequest, type GraphAuthOptions } from "./graph";
 
 const replySchema = z.object({ id: graphId });
 const messageSchema = z.object({ recipient_id: graphId.optional(), message_id: z.string().min(1) });
@@ -15,11 +15,13 @@ export async function replyToComment(
   accessToken: string,
   commentId: string,
   message: string,
+  graphOptions?: GraphAuthOptions,
 ): Promise<{ id: string }> {
   return graphRequest({
     method: "POST",
     path: `/${encodeURIComponent(commentId)}/replies`,
     accessToken,
+    ...graphOptions,
     form: { message: truncateText(message, COMMENT_MAX_CHARS) },
     schema: replySchema,
   });
@@ -32,6 +34,7 @@ export interface PrivateReplyInput {
   commentId: string;
   text: string;
   button?: { title: string; url: string } | null;
+  graphOptions?: GraphAuthOptions;
 }
 
 export interface PrivateReplyResult {
@@ -72,11 +75,13 @@ async function sendMessage(
   igUserId: string,
   recipient: MessageRecipient,
   message: unknown,
+  graphOptions?: GraphAuthOptions,
 ) {
   return graphRequest({
     method: "POST",
     path: `/${encodeURIComponent(igUserId)}/messages`,
     accessToken,
+    ...graphOptions,
     json: { recipient, message },
     schema: messageSchema,
   });
@@ -121,7 +126,7 @@ export function postbackTemplate(text: string, button: { title: string; payload:
  * we fall back to plain text with the link appended, so the DM is still delivered.
  */
 export async function sendPrivateReply(input: PrivateReplyInput): Promise<PrivateReplyResult> {
-  return sendWithButton(input.accessToken, input.igUserId, { comment_id: input.commentId }, input);
+  return sendWithButton(input.accessToken, input.igUserId, { comment_id: input.commentId }, input, input.graphOptions);
 }
 
 /**
@@ -133,8 +138,9 @@ export async function sendDirectMessage(
   igUserId: string,
   igsid: string,
   message: { text: string; button?: { title: string; url: string } | null },
+  graphOptions?: GraphAuthOptions,
 ): Promise<PrivateReplyResult> {
-  return sendWithButton(accessToken, igUserId, { id: igsid }, message);
+  return sendWithButton(accessToken, igUserId, { id: igsid }, message, graphOptions);
 }
 
 async function sendWithButton(
@@ -142,6 +148,7 @@ async function sendWithButton(
   igUserId: string,
   recipient: MessageRecipient,
   input: { text: string; button?: { title: string; url: string } | null },
+  graphOptions?: GraphAuthOptions,
 ): Promise<PrivateReplyResult> {
   const { button } = input;
   const text = truncateText(input.text, DM_MAX_CHARS);
@@ -150,11 +157,11 @@ async function sendWithButton(
     const textChars = Array.from(text).length;
     if (textChars > 0 && textChars <= BUTTON_TEMPLATE_TEXT_MAX) {
       try {
-        const res = await sendMessage(accessToken, igUserId, recipient, webUrlTemplate(text, button));
+        const res = await sendMessage(accessToken, igUserId, recipient, webUrlTemplate(text, button), graphOptions);
         return { messageId: res.message_id, format: "button" };
       } catch (err) {
         if (!isTemplateRejection(err)) throw err;
-        const res = await sendMessage(accessToken, igUserId, recipient, { text: textWithLink(text, button) });
+        const res = await sendMessage(accessToken, igUserId, recipient, { text: textWithLink(text, button) }, graphOptions);
         return {
           messageId: res.message_id,
           format: "text",
@@ -162,11 +169,11 @@ async function sendWithButton(
         };
       }
     }
-    const res = await sendMessage(accessToken, igUserId, recipient, { text: textWithLink(text, button) });
+    const res = await sendMessage(accessToken, igUserId, recipient, { text: textWithLink(text, button) }, graphOptions);
     return { messageId: res.message_id, format: "text" };
   }
 
-  const res = await sendMessage(accessToken, igUserId, recipient, { text });
+  const res = await sendMessage(accessToken, igUserId, recipient, { text }, graphOptions);
   return { messageId: res.message_id, format: "text" };
 }
 
@@ -180,14 +187,15 @@ export async function sendPostbackMessage(
   igUserId: string,
   recipient: MessageRecipient,
   input: { text: string; button: { title: string; payload: string } },
+  graphOptions?: GraphAuthOptions,
 ): Promise<PrivateReplyResult> {
   const text = truncateText(input.text, BUTTON_TEMPLATE_TEXT_MAX);
   try {
-    const res = await sendMessage(accessToken, igUserId, recipient, postbackTemplate(text, input.button));
+    const res = await sendMessage(accessToken, igUserId, recipient, postbackTemplate(text, input.button), graphOptions);
     return { messageId: res.message_id, format: "button" };
   } catch (err) {
     if (!isTemplateRejection(err)) throw err;
-    const res = await sendMessage(accessToken, igUserId, recipient, { text });
+    const res = await sendMessage(accessToken, igUserId, recipient, { text }, graphOptions);
     return {
       messageId: res.message_id,
       format: "text",

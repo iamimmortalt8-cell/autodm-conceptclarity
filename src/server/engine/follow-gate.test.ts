@@ -80,12 +80,12 @@ describe("handleFollowGatePostback", () => {
   it("following: unlocks and sends the rule's DM with its link once", async () => {
     const { deps, state } = setup();
     await expect(handleFollowGatePostback(tap(), { deps, log: silent })).resolves.toBe("unlocked");
-    expect(deps.isFollowing).toHaveBeenCalledWith("IGTOKEN_fake_123456", "igsid_1");
+    expect(deps.isFollowing).toHaveBeenCalledWith("IGTOKEN_fake_123456", "igsid_1", {});
     expect(deps.sendDirect).toHaveBeenCalledTimes(1);
     expect(deps.sendDirect).toHaveBeenCalledWith("IGTOKEN_fake_123456", OUR, "igsid_1", {
       text: "Hi alice, the link:",
       button: { title: "Open", url: "https://example.com/x" },
-    });
+    }, {});
     expect(deps.recordUnlockedMessage).toHaveBeenCalledWith(DELIVERY, "mid_dm");
     expect(state.status).toBe("unlocked");
     expect(deps.sendPostback).not.toHaveBeenCalled();
@@ -129,7 +129,7 @@ describe("handleFollowGatePostback", () => {
     expect(deps.sendPostback).toHaveBeenCalledWith("IGTOKEN_fake_123456", OUR, "igsid_1", {
       text: "Not yet alice",
       button: { title: DEFAULT_FOLLOW_GATE_BUTTON_TITLE, payload: `fg:${DELIVERY}` },
-    });
+    }, {});
     expect(deps.sendDirect).not.toHaveBeenCalled();
     expect(deps.claimUnlock).not.toHaveBeenCalled();
     expect(state.status).toBe("pending");

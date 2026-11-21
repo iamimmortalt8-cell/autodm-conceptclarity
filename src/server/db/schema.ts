@@ -69,14 +69,22 @@ export const apiKeys = pgTable("api_keys", {
 
 /* -------------------------------- instagram ------------------------------- */
 
+export type InstagramApiSetup = "instagram_login" | "unified_login";
+
 export const instagramAccounts = pgTable("instagram_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   igUserId: text("ig_user_id").notNull().unique(),
   username: text("username").notNull(),
   name: text("name"),
   profilePictureUrl: text("profile_picture_url"),
-  /** Encrypted long-lived Instagram User access token. */
+  /** Encrypted Instagram User token or Business Integration System User token. */
   accessTokenEnc: text("access_token_enc").notNull(),
+  /** API/login dialect used by this account; old rows retain Instagram Login behavior. */
+  apiSetup: text("api_setup").$type<InstagramApiSetup>().notNull().default("instagram_login"),
+  /** Present for Unified Login Business Integration System User access tokens. */
+  clientBusinessId: text("client_business_id"),
+  /** Public configuration identifier used to authorize this token. */
+  loginConfigId: text("login_config_id"),
   tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
   tokenRefreshedAt: timestamp("token_refreshed_at", { withTimezone: true }),
   isActive: boolean("is_active").notNull().default(true),

@@ -25,7 +25,7 @@ erDiagram
   login_attempts { uuid id PK; text key; timestamptz created_at }
   settings { text key PK; jsonb value }
   api_keys { uuid id PK; text name; text prefix; text key_hash UK; timestamptz revoked_at }
-  instagram_accounts { uuid id PK; text ig_user_id UK; text username; text access_token_enc; timestamptz token_expires_at; bool is_active }
+  instagram_accounts { uuid id PK; text ig_user_id UK; text username; text access_token_enc; text api_setup; text client_business_id; text login_config_id; timestamptz token_expires_at; bool is_active }
   campaigns { uuid id PK; uuid account_id FK; text name; text media_id; text[] media_ids; bool is_active; timestamptz starts_at; timestamptz ends_at }
   rules { uuid id PK; uuid campaign_id FK; text name; text[] keywords; enum match_mode; text[] public_replies; text dm_message; text dm_button_url; bool once_per_user; int priority }
   deliveries { uuid id PK; text comment_id UK; uuid campaign_id FK; uuid rule_id FK; text commenter_id; enum status; text error; enum source }
@@ -62,8 +62,9 @@ date window, active) -> match rule by priority -> once-per-user check -> public 
 **n8n mode**: n8n receives Meta's webhook, then `POST /api/v1/n8n/events` with `Authorization: Bearer <api key>`,
 the original raw body and original `X-Hub-Signature-256`. Same engine, `source = n8n`.
 
-**Token refresh**: `GET /api/cron/refresh-tokens` (Bearer `CRON_SECRET`) runs daily and refreshes
-tokens nearing expiry. **Health**: `GET /api/health`.
+**OAuth/API mode**: meta.configId selects Facebook Login for Business Unified Login; without it, the retained Instagram Login flow is used. Unified Login exchanges the Meta OAuth code, identifies the BISU client business and assigned Instagram account, and stores the API mode, business ID, configuration ID and encrypted token. Unified Graph calls use graph.facebook.com v27.0, the explicit Instagram account ID and a bearer token; legacy accounts retain graph.instagram.com v25.0 and their existing token flow. Comment payloads normalize Meta's documented id field and tolerate comment_id as a defensive compatibility alias.
+
+**Token refresh**: GET /api/cron/refresh-tokens (Bearer CRON_SECRET) runs daily and refreshes legacy Instagram Login tokens nearing expiry. Unified Login is configured for never-expiring access; if a Unified token has a finite expiry, the app reports that it must be reconnected with the documented never-expiring configuration rather than applying the legacy refresh endpoint. **Health**: GET /api/health.
 
 **Recovery**: read paths retry once on connection-level errors (`withDbRetry`); error boundaries
 re-render once, and reload once on version skew after a deploy (`src/lib/error-recovery.ts`,
@@ -92,6 +93,6 @@ ignored, so a comment is never replied to twice.
   with `src/lib/csv.ts` (RFC 4180, UTF-8 BOM, formula-injection guard, 50,000-row cap, dates in the configured time zone).
 - Secrets encrypted (AES-256-GCM, key from HKDF(`APP_SECRET`)); never sent to the browser or logged.
 - RLS enabled, no policies: the Supabase REST anon key sees nothing. The app uses a server-side Postgres connection.
-- Outbound hosts: `graph.instagram.com` / `api.instagram.com` (Instagram API) and the fixed
-  `api.github.com` releases URL for the Settings → About update check (cached 6 h, fails closed).
+- Outbound hosts: graph.instagram.com / api.instagram.com for legacy Instagram Login, graph.facebook.com and www.facebook.com for Unified Login, and the fixed api.github.com releases URL for the Settings → About update check (cached 6 h, fails closed).
+
 - See [SECURITY.md](../SECURITY.md).

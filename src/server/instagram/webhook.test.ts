@@ -103,6 +103,20 @@ describe("parseWebhookPayload / extractCommentEvents", () => {
     ]);
   });
 
+  it("accepts Unified Login comment_id payloads and normalizes them", () => {
+    const payload = parseWebhookPayload(JSON.stringify({
+      object: "instagram",
+      entry: [{ id: "17841400000000001", changes: [{ field: "comments", value: {
+        comment_id: "17865799348089039", text: "HELLO", from: { id: "232323232" },
+        media: { id: "18000000000000001", media_product_type: "REELS" },
+      } }] }],
+    }))!;
+    expect(extractCommentEvents(payload)).toMatchObject([{
+      commentId: "17865799348089039", igUserId: "17841400000000001",
+      fromId: "232323232", mediaId: "18000000000000001", mediaProductType: "REELS",
+    }]);
+  });
+
   it("captures parent_id for replies and coerces numeric ids", () => {
     const payload = parseWebhookPayload(
       JSON.stringify({

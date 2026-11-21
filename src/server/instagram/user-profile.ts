@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { graphRequest } from "./graph";
+import { graphRequest, type GraphAuthOptions } from "./graph";
 
 const followStatusSchema = z.object({ is_user_follow_business: z.boolean() });
 
@@ -10,10 +10,15 @@ const followStatusSchema = z.object({ is_user_follow_business: z.boolean() });
  * opened the conversation (e.g. tapped a postback button). Throws {@link GraphApiError} on failure
  * or when the field is missing; GET is retried on 429/5xx.
  */
-export async function getUserFollowStatus(accessToken: string, igsid: string): Promise<boolean> {
+export async function getUserFollowStatus(
+  accessToken: string,
+  igsid: string,
+  graphOptions?: GraphAuthOptions,
+): Promise<boolean> {
   const res = await graphRequest({
     path: `/${encodeURIComponent(igsid)}`,
     accessToken,
+    ...graphOptions,
     query: { fields: "is_user_follow_business" },
     schema: followStatusSchema,
   });

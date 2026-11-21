@@ -33,6 +33,21 @@ describe("graphRequest", () => {
     expect(url.toString()).toBe(`${GRAPH_BASE_URL}/me?fields=id&access_token=TOKEN`);
   });
 
+  it("uses the Unified Login Graph host and bearer token without putting it in the URL", async () => {
+    const fetchMock = vi.fn<FetchFn>(async () => json({ id: "1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await graphRequest({
+      path: "/17841400000000001",
+      accessToken: "BISU_SECRET",
+      baseUrl: "https://graph.facebook.com/v27.0",
+      tokenTransport: "bearer",
+      schema: z.object({ id: z.string() }),
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url.toString()).toBe("https://graph.facebook.com/v27.0/17841400000000001");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer BISU_SECRET");
+  });
+
   it("sends form bodies", async () => {
     const fetchMock = vi.fn<FetchFn>(async () => json({ id: "r1" }));
     vi.stubGlobal("fetch", fetchMock);

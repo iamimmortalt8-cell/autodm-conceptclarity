@@ -19,10 +19,10 @@ import { createSession } from "@/server/auth/session";
 import { getUserById, updatePassword, updateUsername } from "@/server/auth/users";
 import { randomToken } from "@/server/crypto";
 import { AppError } from "@/server/errors";
-import { disconnectAccount, getAccessToken, getActiveAccount } from "@/server/instagram/account";
+import { disconnectAccount, getActiveAccount } from "@/server/instagram/account";
 import { subscribeAndRecord } from "@/server/instagram/oauth";
 import { logger } from "@/server/log";
-import { ensureVerifyToken, setSetting } from "@/server/settings";
+import { deleteSetting, ensureVerifyToken, setSetting } from "@/server/settings";
 
 const log = logger("settings");
 const authLog = logger("auth");
@@ -89,8 +89,10 @@ export const saveMetaAppAction = authedAction(
   "settings",
   "save_meta_app",
   metaAppSchema,
-  async ({ appId, appSecret }) => {
+  async ({ appId, appSecret, configId }) => {
     await setSetting("meta.appId", appId);
+    if (configId) await setSetting("meta.configId", configId);
+    else await deleteSetting("meta.configId");
     if (appSecret) await setSetting("meta.appSecret", appSecret);
     log.info("meta_app.saved", { secretUpdated: !!appSecret });
     revalidatePath("/settings");
@@ -143,7 +145,7 @@ export const resubscribeWebhooksAction = authedAction(
     if (!account || !account.accessTokenEnc) {
       throw new AppError("NOT_CONFIGURED", "Connect an Instagram account first.");
     }
-    const status = await subscribeAndRecord(getAccessToken(account), "manual");
+    const status = await subscribeAndRecord(account, "manual");
     revalidatePath("/settings");
     if (!status.ok) {
       return fail(

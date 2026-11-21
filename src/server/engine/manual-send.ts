@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { AppError } from "@/server/errors";
 import { getAccessToken, getActiveAccount } from "@/server/instagram/account";
 import { fetchRecentComments } from "@/server/instagram/comments";
+import { graphOptionsForAccount } from "@/server/instagram/account";
 import { GraphApiError, safeErrorMessage } from "@/server/instagram/graph";
 import { logger } from "@/server/log";
 import {
@@ -140,7 +141,7 @@ export async function syncMissedComments(input: {
   const result: SyncMissedResult = { posts: mediaIds.length, checked: 0, added: 0, truncated: 0, failed: 0 };
   for (const mediaId of mediaIds) {
     try {
-      const { comments, truncated } = await fetchRecentComments({ accessToken: token, mediaId, since });
+      const { comments, truncated } = await fetchRecentComments({ accessToken: token, mediaId, since, graphOptions: graphOptionsForAccount(account) });
       result.checked += comments.length;
       if (truncated) result.truncated++;
       const missed: MissedCommentInput[] = comments

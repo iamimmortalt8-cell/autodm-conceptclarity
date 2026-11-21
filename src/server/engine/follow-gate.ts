@@ -2,9 +2,9 @@ import "server-only";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/server/db/client";
 import { deliveries, rules, type Delivery, type InstagramAccount, type Rule } from "@/server/db/schema";
-import { getAccessToken, getActiveAccount } from "@/server/instagram/account";
+import { getAccessToken, getActiveAccount, graphOptionsForAccount } from "@/server/instagram/account";
 import { DM_MAX_CHARS } from "@/server/instagram/constants";
-import { safeErrorMessage } from "@/server/instagram/graph";
+import { safeErrorMessage, type GraphAuthOptions } from "@/server/instagram/graph";
 import {
   sendDirectMessage,
   sendPostbackMessage,
@@ -59,7 +59,7 @@ type GateRule = Pick<
 /** Side effects of the handler, injectable for unit tests. */
 export interface FollowGateDeps {
   processingEnabled: () => Promise<boolean>;
-  getAccount: () => Promise<Pick<InstagramAccount, "igUserId" | "accessTokenEnc"> | null>;
+  getAccount: () => Promise<(Pick<InstagramAccount, "igUserId" | "accessTokenEnc"> & { apiSetup?: InstagramAccount["apiSetup"] }) | null>;
   getToken: (account: Pick<InstagramAccount, "accessTokenEnc">) => string;
   getDelivery: (id: string) => Promise<GateDelivery | undefined>;
   getRule: (id: string) => Promise<GateRule | undefined>;
@@ -71,18 +71,20 @@ export interface FollowGateDeps {
   /** Back to `pending` after a failed send, so the user can tap again. */
   revertUnlock: (deliveryId: string) => Promise<void>;
   recordUnlockedMessage: (deliveryId: string, messageId: string) => Promise<void>;
-  isFollowing: (token: string, igsid: string) => Promise<boolean>;
+  isFollowing: (token: string, igsid: string, graphOptions?: GraphAuthOptions) => Promise<boolean>;
   sendDirect: (
     token: string,
     igUserId: string,
     igsid: string,
     message: { text: string; button: { title: string; url: string } | null },
+    graphOptions?: GraphAuthOptions,
   ) => Promise<PrivateReplyResult>;
   sendPostback: (
     token: string,
     igUserId: string,
     igsid: string,
     input: { text: string; button: { title: string; payload: string } },
+    graphOptions?: GraphAuthOptions,
   ) => Promise<PrivateReplyResult>;
 }
 
@@ -134,9 +136,11 @@ export const defaultFollowGateDeps: FollowGateDeps = {
       })
       .where(eq(deliveries.id, deliveryId));
   },
-  isFollowing: (token, igsid) => getUserFollowStatus(token, igsid),
-  sendDirect: (token, igUserId, igsid, message) => sendDirectMessage(token, igUserId, igsid, message),
-  sendPostback: (token, igUserId, igsid, input) => sendPostbackMessage(token, igUserId, { id: igsid }, input),
+  isFollowing: (token, igsid, graphOptions) => getUserFollowStatus(token, igsid, graphOptions),
+  sendDirect: (token, igUserId, igsid, message, graphOptions) =>
+    sendDirectMessage(token, igUserId, igsid, message, graphOptions),
+  sendPostback: (token, igUserId, igsid, input, graphOptions) =>
+    sendPostbackMessage(token, igUserId, { id: igsid }, input, graphOptions),
 };
 
 /** The rule's normal DM for a delivery: same rendering and link button as the send path. */
@@ -204,10 +208,11 @@ export async function handleFollowGatePostback(
     if (!rule) return done("ignored_rule_deleted", { deliveryId });
 
     token = deps.getToken(account);
+    const graphOptions = graphOptionsForAccount(account);
     let following: boolean;
     let failOpen = false;
     try {
-      following = await deps.isFollowing(token, event.senderId);
+      following = await deps.isFollowing(token, event.senderId, graphOptions);
     } catch (err) {
       // Fail open: a Meta outage must not strand real followers.
       following = true;
@@ -226,7 +231,7 @@ export async function handleFollowGatePostback(
         await deps.sendPostback(token, account.igUserId, event.senderId, {
           text,
           button: { title: gate.buttonTitle, payload: event.payload },
-        });
+        }, graphOptions);
       } catch (err) {
         log.warn("follow_gate.retry_send_failed", { deliveryId, err: safeErrorMessage(err, [token]) });
         return done("send_failed", { deliveryId });
@@ -237,7 +242,7 @@ export async function handleFollowGatePostback(
     if (!(await deps.claimUnlock(deliveryId))) return done("ignored_not_pending", { deliveryId });
     const dm = unlockedDm(rule, delivery);
     try {
-      const res = await deps.sendDirect(token, account.igUserId, event.senderId, dm);
+      const res = await deps.sendDirect(token, account.igUserId, event.senderId, dm, graphOptions);
       await deps.recordUnlockedMessage(deliveryId, res.messageId).catch(() => undefined);
     } catch (err) {
       await deps.revertUnlock(deliveryId).catch(() => undefined);

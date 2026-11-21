@@ -1,272 +1,68 @@
-# Meta (Instagram) setup guide
+# Meta Unified Login setup
 
-This guide connects your own Instagram account to your own AutoDM deployment. It takes about
-15 minutes and costs nothing. You create **your own Meta app** (nobody else's credentials are shared),
-so you stay in full control of your data.
+This guide configures a self-hosted AutoDM instance with Meta's current Instagram API with Unified Login. Use a Meta app that has the Instagram API with Unified Login use case and a Facebook Login for Business configuration. Instagram Login uses a different OAuth flow and is not compatible with this setup.
 
-> **Verification status.** Written October 2026 from Meta's developer documentation and secondary
-> sources. The Meta developer site could not be fetched directly while writing, so items marked
-> **⚠ verify** come from search snippets or third parties. Meta changes its dashboard often; if a
-> label differs slightly, look for the closest match and please [open an issue](https://github.com/ilramdhan/auto-dm/issues).
+## Required values
 
-## What you need first
+Set these deployment environment variables in your host:
 
-- An **Instagram Professional account** (Business or Creator). Switch in the Instagram app:
-  _Settings → Account type and tools → Switch to professional account_.
-- In the Instagram app: _Settings → Messages and story replies → Message controls → Connected tools →
-  Allow access to messages_ **ON**. Without it every DM fails.
-- A **Facebook account** to log in to developers.facebook.com (a Facebook Page is **not** required for
-  the "Instagram Login" flow this app uses).
-- Your app deployed and reachable over **HTTPS** (see [deployment.md](deployment.md)). Meta cannot call
-  `localhost`; for local testing use a tunnel such as `cloudflared` or `ngrok`.
-- You have logged in to the app and changed the default password.
+- DATABASE_URL (or the supported Supabase/Vercel database URL)
+- APP_SECRET (at least 32 characters; encrypts stored credentials and signs sessions)
+- APP_URL (the public HTTPS origin of this AutoDM instance, with no trailing slash)
+- CRON_SECRET (if using the scheduled token maintenance route)
 
-Throughout, `{APP_URL}` is your public URL, e.g. `https://my-replies.vercel.app` (no trailing slash).
+There is no Meta credential environment variable. In Settings → Instagram, save the Meta App ID, App Secret, and Facebook Login for Business Configuration ID. AutoDM encrypts the App Secret in its database. The configuration ID is not secret. Never place tokens or App Secrets in source control, client-side settings, URLs you share, or logs.
 
-| Value                                                        | You will paste it into                   |
-| ------------------------------------------------------------ | ---------------------------------------- |
-| OAuth redirect URI: `{APP_URL}/api/instagram/oauth/callback` | Meta dashboard → Business login settings |
-| Webhook callback URL: `{APP_URL}/api/webhooks/instagram`     | Meta dashboard → Webhooks                |
-| Verify token (shown in **Settings → Instagram**)             | Meta dashboard → Webhooks                |
-| Meta App ID and App Secret                                   | **Settings → Instagram** in the app      |
+Exact URLs:
 
-The app shows the callback URL and the verify token with copy buttons so you do not have to type them.
+- OAuth redirect/callback: {APP_URL}/api/instagram/oauth/callback
+- Instagram webhook callback: {APP_URL}/api/webhooks/instagram
+- Deauthorization callback: {APP_URL}/api/instagram/deauthorize
+- Data deletion callback: {APP_URL}/api/instagram/data-deletion
 
-## Part 1 - Create the Meta app
+Use the callback and webhook URLs exactly as shown in Settings → Instagram. HTTPS is required for a public deployment.
 
-1. Go to <https://developers.facebook.com/apps> and log in. If asked, register as a Meta developer
-   (accept the terms, verify phone/email).
-2. Click **Create app**.
-3. Enter an **App name** (anything, e.g. "My Comment Replies") and a contact email. Click **Next**.
-4. When asked for a use case, choose **Other** (or the option about "Manage messaging & content on
-   Instagram" if shown - ⚠ verify, Meta renames use cases regularly). Then choose the app type
-   **Business**. Click **Next**, then **Create app**.
-5. On the app dashboard, find **Add products** (or _Products_ in the left menu) and add **Instagram**.
-   Open **Instagram → API setup with Instagram login**. In newer dashboards the same page is under
-   **Use cases → Manage messaging & content on Instagram → Customize**.
+## Meta dashboard
 
-## Part 2 - Permissions
+1. Create/use a Business Meta app with the Instagram API with Unified Login use case. Add the Facebook Login for Business product and create a configuration for this use case.
+2. In the configuration, choose Instagram account access as required. For this single-account AutoDM instance, authorize exactly one professional Instagram account. If the configuration permits optional ad accounts, they are not needed for AutoDM.
+3. Request at least instagram_basic, instagram_manage_comments, and instagram_manage_messages. These support account discovery, comment webhooks/moderation, private replies, and messaging. Add other permissions only when your app feature needs them.
+4. Set the configuration's Valid OAuth Redirect URI to {APP_URL}/api/instagram/oauth/callback. Save the configuration and copy its Configuration ID.
+5. In App settings → Basic, copy the Meta App ID and App Secret. Save those plus the Configuration ID in AutoDM Settings → Instagram.
+6. Configure Instagram webhooks using {APP_URL}/api/webhooks/instagram and the verify token displayed in AutoDM Settings → Instagram. Verify/save the callback and subscribe to comments and messaging_postbacks. The latter is used by the optional follow-gate postback button. AutoDM verifies X-Hub-Signature-256 against the Meta App Secret.
+7. Configure the app's deauthorization and data deletion callback URLs above if you use those Meta app capabilities. AutoDM validates the signed request and removes or deletes the associated stored data.
+8. Grant the app's required access level for the Instagram accounts you will serve. Meta's current Unified Login setup does not support test users; use app roles and supported access levels for development and complete App Review/Advanced Access where Meta requires it for external accounts or webhook permissions.
+9. In AutoDM click Connect Instagram, sign in, approve access, and select one professional account. The OAuth completion exchanges the code, reads /me?fields=client_business_id and /me/assigned_instagram_accounts?fields=id,username, saves the selected account and token encrypted, then subscribes that account to the webhook fields. If zero or multiple accounts are returned, AutoDM reports the mismatch instead of silently choosing an account.
+10. Test with a comment from a different Instagram account, then confirm the comment arrives in Activity and the configured public reply/private reply is sent.
 
-On the **API setup with Instagram login** page, step "Generate access tokens" lists the permissions.
-This app needs three:
+## OAuth and token behavior
 
-| Permission                           | Used for                                            |
-| ------------------------------------ | --------------------------------------------------- |
-| `instagram_business_basic`           | Read your profile and your media list (post picker) |
-| `instagram_business_manage_comments` | Read comments, post public replies                  |
-| `instagram_business_manage_messages` | Send the private reply (DM)                         |
+AutoDM redirects to Meta's OAuth dialog with the Meta App ID, exact redirect URI, response_type=code, the saved config_id, state, and Meta's documented display=popup and prompt=login parameters. The callback verifies the signed, short-lived state cookie before exchanging the code at the versioned Graph API oauth/access_token endpoint using the Meta App ID and App Secret.
 
-The app requests exactly these during **Connect Instagram**. ⚠ verify: Meta's current Private Replies
-page lists `instagram_business_basic` + `instagram_business_manage_comments` as requirements, and
-treats `instagram_business_manage_messages` as the messaging permission. Requesting all three is the
-safe choice and is what the app does.
+The returned Business Integration System User (BISU) token is used against graph.facebook.com with the authorized Instagram professional account ID. The token is encrypted at rest and sent to Meta in an Authorization Bearer header. /me in this flow is the BISU identity; AutoDM separately resolves and stores the Instagram account ID and client business ID. Existing campaigns remain attached to the same account row on reconnect.
 
-## Part 3 - Enter the app credentials in the app
+Configure the login to produce a token with Never expiration, as in the supplied Meta configuration. AutoDM does not apply Instagram Login's ig_refresh_token endpoint to a Unified Login token. If Meta returns an expiring Unified Login token, AutoDM records its expiry and refuses to guess a refresh route once renewal is due; reconnect using a never-expiring configuration. Revocation, removal of business asset access, or changing the login configuration can still invalidate access and require reconnecting.
 
-1. In the Meta dashboard open **App settings → Basic**. Copy the **App ID** and click **Show** next to
-   **App Secret** (re-enter your Facebook password if prompted).
-   - ⚠ verify: on the _Instagram → API setup_ page Meta also shows a separate **Instagram app ID** and
-     **Instagram app secret**. For Instagram Login, **use the Instagram app ID/secret shown on the API
-     setup page** if they differ from App settings → Basic.
-2. In AutoDM go to **Settings → Instagram**, paste **Meta App ID** and **App Secret**, and save.
-   The secret is encrypted at rest and never shown again.
+Instagram Login accounts already in the database retain their existing API mode and refresh path. A new Unified Login connection is saved as Unified Login; existing data and migrations are preserved.
 
-## Part 4 - OAuth redirect URI
+## Troubleshooting
 
-1. In the Meta dashboard open **Instagram → API setup with Instagram login → 3. Set up Instagram
-   business login** and click **Business login settings**.
-2. Under **OAuth redirect URIs** add exactly:
-   `{APP_URL}/api/instagram/oauth/callback`
-3. Save. The URI must match **character for character** (https, no trailing slash).
+- missing_app_credentials: save the Meta App ID and App Secret.
+- OAuth redirect mismatch: compare the exact HTTPS URL in AutoDM with the Valid OAuth Redirect URI in the Login for Business configuration.
+- No Instagram account returned: ensure the signed-in business has assigned an Instagram Professional account and the configuration requested that asset.
+- More than one account returned: set the Login for Business configuration to authorize one account, then reconnect.
+- Webhook subscription failed: verify the comments and messaging_postbacks fields, permissions, callback verification, and account connection. Retry from Webhook diagnostics.
+- Invalid signature: ensure the Meta App Secret saved in AutoDM belongs to the Meta App ID used by the callback.
+- Expired/revoked token: reconnect the Instagram account in AutoDM and check the business asset assignment.
 
-## Part 5 - Add your Instagram account as a tester (Development mode)
+## Official Meta documentation
 
-New apps start in **Development mode**: only people with a role on the app can use it.
-
-1. Dashboard → **App roles → Roles → Add People**, choose **Instagram Testers**, enter your Instagram
-   username, and submit. (If your account owns the Meta developer login via Facebook, also add it as
-   Administrator.)
-2. Open the Instagram app (or instagram.com) with that account: _Settings → Website permissions
-   (or "Apps and websites") → Tester invites_ → **Accept**.
-3. Back in the dashboard, the tester should now show as accepted.
-
-## Part 6 - Connect Instagram
-
-1. In AutoDM: **Settings → Instagram → Connect Instagram**.
-2. Log in to Instagram and **Allow** all three permissions.
-3. You return to the app and see your username. Behind the scenes the app exchanges the code for a
-   short-lived token, upgrades it to a **long-lived (~60 days)** token, encrypts it, and subscribes
-   your account to the `comments` and `messaging_postbacks` webhook fields (`POST /me/subscribed_apps`).
-
-## Part 7 - Webhook setup
-
-1. In the Meta dashboard open **Instagram → API setup with Instagram login → 2. Configure webhooks**.
-2. **Callback URL**: `{APP_URL}/api/webhooks/instagram`
-   **Verify token**: copy it from **Settings → Instagram** in the app.
-3. Click **Verify and save**. Meta sends a `GET` with `hub.challenge`; the app answers if the token
-   matches. If it fails, see [troubleshooting.md](troubleshooting.md).
-4. In the webhook fields list, **subscribe to `comments`** and **`messaging_postbacks`** (toggle both on).
-   `messaging_postbacks` is only needed for the follow gate button (Part 9).
-5. Your account must also be subscribed to the app. The **Connect Instagram** step does this; the
-   dashboard shows "Webhook subscriptions" per account on the same page. In the app, **Settings →
-   Instagram → Webhook diagnostics** shows the last subscription result, a **Re-subscribe webhooks**
-   button, and every recent request Meta sent (verified, accepted or rejected, and why).
-6. Test by commenting from a **second account** (in Development mode: an accepted Instagram Tester).
-   Comments by the connected account itself are always skipped. See
-   [My test comment did nothing](troubleshooting.md#my-test-comment-did-nothing).
-
-Using n8n as relay instead? Point Meta at your n8n webhook URL and follow [n8n.md](n8n.md).
-
-## Part 8 - Development vs Live mode (important)
-
-|                                      | Development mode                                              | Live mode                                         |
-| ------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------- |
-| Who can trigger webhooks / be served | Accounts with a role on the app (admins, developers, testers) | Everyone, subject to your permission access level |
-| Comments from random followers       | **Not delivered** (⚠ verify - widely reported)                | Delivered if permissions allow (see below)        |
-| Needs Privacy Policy URL             | No                                                            | **Yes** (App settings → Basic)                    |
-
-To go Live, Meta needs a privacy policy and a way for users to have their data deleted. The app
-serves both; **Settings → Instagram → Meta app review** lists all four URLs with copy buttons.
-
-1. In AutoDM open **Settings → Account → Public contact** and enter your name (or business
-   name) and a contact email. They are shown on the public privacy policy and data deletion pages
-   (until you do, the pages use generic wording like "the operator of this site"). The privacy
-   policy also states how long comment records are kept; set it in **Settings → Processing → Data
-   retention** (default 365 days; old records are deleted daily by the cron job).
-2. Meta dashboard → **App settings → Basic**:
-   - **Privacy Policy URL**: `{APP_URL}/privacy`
-   - **Terms of Service URL** (optional, recommended): `{APP_URL}/terms`
-   - **User data deletion**: choose **Data deletion instructions URL** and paste
-     `{APP_URL}/data-deletion`
-   - also set a **Category** and an app icon (1024x1024), then save.
-3. Meta dashboard → **Instagram → API setup with Instagram login → 3. Set up Instagram business
-   login → Business login settings**:
-   - **Deauthorize callback URL**: `{APP_URL}/api/instagram/deauthorize` - called when someone
-     removes your app; if it's the connected account, its token is wiped and it is disconnected.
-   - **Data deletion request URL**: `{APP_URL}/api/instagram/data-deletion` - called when someone
-     asks Meta to delete their data; the app deletes their comment records (and, for the connected
-     account, its token and profile details) right away and answers with a confirmation code. The
-     person can check the status at `{APP_URL}/data-deletion?code=...`.
-   - Save. Both callbacks verify Meta's `signed_request` with your App Secret, so save the App Secret
-     in **Settings → Instagram** first.
-4. Use the **toggle at the top of the dashboard** ("App mode: Development → Live").
-
-**Handling a commenter's email request.** People who only commented on your posts never log in to
-the app, so Meta never sends a deletion callback for them; the public `/data-deletion` page asks them
-to email you instead. To act on such an email, open **Activity** and use the trash icon on one of
-their rows ("Delete @username's data"), or enter their username in **Settings → Account → Delete a
-commenter's data**. After you confirm, every stored comment record for that commenter is deleted
-(matched by Instagram user id, or by username case-insensitively), the connected account is not
-touched, and you get a confirmation code. Reply with the status link
-`{APP_URL}/data-deletion?code=...` so they can check it themselves.
-
-### Standard vs Advanced Access - do I need App Review?
-
-Meta's rule (from the Instagram Platform App Review docs): **Standard Access** is for apps that only
-serve Instagram professional accounts **you own or manage** (accounts that have a role on the app).
-**Advanced Access** - which requires **App Review and Business Verification** - is required when the app
-serves accounts you do not own (a SaaS for other people).
-
-For a self-hosted tool used on **your own account**, Standard Access is the intended path and App Review
-is not required. The open question is whether, in Live mode with Standard Access, comments from the
-general public (non-testers) reach your webhook:
-
-- Meta's webhook documentation says apps need **Advanced Access** on the relevant permission to
-  receive webhook notifications, and development mode only notifies for users with an app role.
-  (⚠ verify - this wording comes from the older Facebook-Login-based docs and community reports.)
-- In practice many self-hosters report that **Live mode + Standard Access + your own account** works
-  for comments by anyone. Other reports say Meta requires Advanced Access for `comments` webhooks.
-  **We could not confirm either from primary sources.** Test it: switch to Live, comment from a
-  second account that is _not_ a tester, and check **Activity** in the app.
-- If webhooks do not arrive, request Advanced Access for `instagram_business_manage_comments` and
-  `instagram_business_manage_messages`: dashboard → **App Review → Permissions and features**. Expect to
-  provide a screencast, a privacy policy and (for Advanced Access) **Business Verification**
-  (Business settings → Security centre). Reviews can take days to weeks.
-
-Apps migrating from Facebook Login may be granted Advanced Access automatically; that does not apply
-to a brand-new app.
-
-## Part 9 - Private Reply rules (what limits your DMs)
-
-Verified against Meta's Private Replies documentation and secondary sources:
-
-- **One private reply per comment.** You cannot send a second DM using the same `comment_id`.
-- **Within 7 days** of the comment's creation. (Instagram Live comments: only while the broadcast is live.)
-- The private reply is sent with `POST /{ig-user-id}/messages` and `recipient: { "comment_id": "..." }`.
-- The message includes a link to the commented post (Meta adds it).
-- **Follow-ups:** after the private reply, you may send further messages only if the user **replies**,
-  which opens the standard **24-hour** messaging window.
-- **Text length:** the app caps DM text at **1000 characters** (Meta's Messaging API text limit is
-  commonly cited as 1000 bytes/characters - ⚠ verify exact unit; keep messages short and avoid long emoji runs).
-- **Buttons:** a link button requires the _generic template_ message format. ⚠ verify that generic
-  templates/buttons are accepted in a _private reply_ to a comment; if Meta rejects it the app falls
-  back to a plain-text DM with the URL included in the text (see `docs/troubleshooting.md`).
-- **Follow gate (optional, per rule):** the first Private Reply carries the gate text and a _postback_
-  button ("I've followed" by default) instead of the link. When the commenter taps it, Meta sends a
-  `messaging_postbacks` webhook and the tap **opens the 24-hour messaging window**, so the follow-up
-  is sent with `recipient: { id }` (IGSID). The app calls `GET /{IGSID}?fields=is_user_follow_business`:
-  if they follow you it sends the rule's normal DM (text + link button); if not, it resends the
-  editable "not following yet" text with the same button. If that API call fails (Meta error or
-  timeout) it **fails open** and sends the link, logging a redacted summary. Each delivery unlocks only
-  once; repeat taps are ignored. Accounts connected before this feature must click **Settings →
-  Instagram → Re-subscribe webhooks** once to add `messaging_postbacks`; until then everything except
-  the gate button keeps working.
-- **Rate limits** (⚠ verify, from secondary sources): about **750 calls/hour per account** for private
-  replies on posts/reels (100/second for Live). General Graph API call limits also apply. A typical
-  creator account never gets near these, but a viral post can; the app logs failures in **Activity**.
-- **Public comment replies** use `POST /{comment-id}/replies`. Don't reply to your own comments; the app
-  ignores them to prevent loops. Instagram may hide spammy repeated replies - use several variants.
-
-## Part 10 - Tokens
-
-- Short-lived token: ~1 hour. Long-lived token: **~60 days** (⚠ verify). Refresh with
-  `GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=...`;
-  the token must be at least 24 hours old and not expired. Each refresh gives a fresh 60 days.
-- The app does this automatically with a **daily Vercel Cron** (`/api/cron/refresh-tokens`, protected
-  by `CRON_SECRET`). If it ever fails (app asleep for 60+ days), just click **Connect Instagram** again.
-- Graph API version: the Instagram Login host `graph.instagram.com` accepts versioned paths; at the
-  time of writing the latest is reported as **v25.0** (⚠ verify at
-  <https://developers.facebook.com/docs/graph-api/changelog>). The app pins one version in code.
-
-## Is it free and unlimited?
-
-**The software: yes.** MIT licensed, no per-contact fee, no per-message fee, no "contact limit", no
-paywalled features. Hosting runs on the free tiers of Vercel Hobby and Supabase Free.
-
-**The platform: limits come from Meta, not from this project.**
-
-- Meta's APIs are free to use; there is no charge per comment or DM.
-- Rate limits apply (see Part 9) and Meta can throttle or restrict an account that sends spam-like
-  content. Don't send unsolicited promotions; only DM people who commented a keyword you asked for.
-- Private replies: one per comment, within 7 days, no follow-ups unless the user answers.
-- Live mode and (possibly) App Review / Business Verification are required to serve the public.
-- Free-tier hosting has its own quotas (Vercel Hobby is for non-commercial use per Vercel's terms -
-  ⚠ check if you run this for a business; Supabase Free pauses inactive projects after a week - the daily
-  cron keeps it active).
-- "Unlimited keywords / posts / campaigns" is true of the app: there is no artificial cap.
-
-## Quick checklist
-
-- [ ] Professional IG account
-- [ ] Meta app (Business type) with Instagram product
-- [ ] App ID + Secret saved in **Settings → Instagram**
-- [ ] Redirect URI `{APP_URL}/api/instagram/oauth/callback` whitelisted
-- [ ] IG account added as Instagram Tester and invite accepted
-- [ ] **Connect Instagram** done
-- [ ] Webhook callback `{APP_URL}/api/webhooks/instagram` + verify token verified, `comments` and `messaging_postbacks` subscribed
-- [ ] Using the follow gate on an account connected earlier? Clicked **Re-subscribe webhooks** once
-- [ ] Name + contact email saved in **Settings → Account → Public contact**
-- [ ] App settings → Basic: Privacy Policy URL `{APP_URL}/privacy`, data deletion instructions URL
-      `{APP_URL}/data-deletion`
-- [ ] Business login settings: deauthorize callback `{APP_URL}/api/instagram/deauthorize`, data
-      deletion request URL `{APP_URL}/api/instagram/data-deletion`
-- [ ] App switched to **Live**
-- [ ] Test comment from a _second_ account produces a row in **Activity**
-
-## Sources
-
-- Private Replies: <https://developers.facebook.com/docs/instagram-platform/private-replies/>
-- App Review for Instagram API: <https://developers.facebook.com/docs/instagram-platform/app-review>
-- Instagram Platform overview: <https://developers.facebook.com/docs/instagram-platform/overview>
-- Webhooks for Instagram: <https://developers.facebook.com/docs/graph-api/webhooks/getting-started/webhooks-for-instagram>
-- Secondary: <https://postproxy.dev/how-to/instagram-comment-to-dm-private-reply/>, <https://www.postmcpai.com/instagram-messaging-api>
+- [Get started with Instagram API with Unified Login](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started)
+- [Authentication](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/authentication)
+- [Migration from Instagram Login](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/migration)
+- [Permissions](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/permissions)
+- [Webhooks setup](https://developers.facebook.com/documentation/instagram-platform/webhooks/setup)
+- [Webhook fields](https://developers.facebook.com/documentation/instagram-platform/webhooks/fields)
+- [Private Replies](https://developers.facebook.com/documentation/instagram-platform/private-replies)
+- [Comment moderation](https://developers.facebook.com/documentation/instagram-platform/comment-moderation)
+- [Facebook Login for Business](https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business)

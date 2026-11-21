@@ -20,6 +20,8 @@ export const SETTINGS = {
   /** Instagram app (Meta developer dashboard -> Instagram -> API setup with Instagram login). */
   "meta.appId": { schema: z.string().regex(/^\d{5,25}$/, "Must be a numeric app id"), secret: false },
   "meta.appSecret": { schema: z.string().min(16).max(128), secret: true },
+  /** Facebook Login for Business configuration ID used by Instagram API with Unified Login. */
+  "meta.configId": { schema: z.string().regex(/^\d{5,25}$/, "Must be a numeric configuration id"), secret: false },
   /** Token Meta echoes back when verifying the webhook subscription. Auto-generated. */
   "webhook.verifyToken": { schema: z.string().min(16).max(128), secret: true },
   /** Result of the last `POST /me/subscribed_apps` (Connect or "Re-subscribe webhooks"). Diagnostics only. */

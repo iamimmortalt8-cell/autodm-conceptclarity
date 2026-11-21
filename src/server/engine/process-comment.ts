@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/server/db/client";
 import { deliveries, type InstagramAccount } from "@/server/db/schema";
-import { getAccessToken, getActiveAccount } from "@/server/instagram/account";
+import { getAccessToken, getActiveAccount, graphOptionsForAccount } from "@/server/instagram/account";
 import { COMMENT_MAX_CHARS, DM_MAX_CHARS } from "@/server/instagram/constants";
 import { GraphApiError, safeErrorMessage } from "@/server/instagram/graph";
 import { logger, type Logger } from "@/server/log";
@@ -198,6 +198,7 @@ export async function sendForDelivery(input: SendForDeliveryInput): Promise<Proc
     if (!claimed) return await skip("already_delivered");
 
     token = getAccessToken(account);
+    const graphOptions = graphOptionsForAccount(account);
     const vars = { username: input.commenterUsername, keyword: templateKeyword(match.keyword) };
     const errors: string[] = [];
     let errorCode: string | null = null;
@@ -210,7 +211,7 @@ export async function sendForDelivery(input: SendForDeliveryInput): Promise<Proc
     const publicText = variant ? truncateText(renderTemplate(variant, vars).trim(), COMMENT_MAX_CHARS) : "";
     if (publicText) {
       try {
-        publicReplyId = (await replyToComment(token, commentId, publicText)).id;
+        publicReplyId = (await replyToComment(token, commentId, publicText, graphOptions)).id;
         publicReplyStatus = "sent";
       } catch (err) {
         publicReplyStatus = "failed";
@@ -233,6 +234,7 @@ export async function sendForDelivery(input: SendForDeliveryInput): Promise<Proc
           account.igUserId,
           { comment_id: commentId },
           { text: gateText, button: { title: gate.buttonTitle, payload: followGatePayload(deliveryId) } },
+          graphOptions,
         );
         dmMessageId = dm.messageId;
         dmStatus = "sent";
@@ -264,6 +266,7 @@ export async function sendForDelivery(input: SendForDeliveryInput): Promise<Proc
           commentId,
           text: dmText,
           button,
+          graphOptions,
         });
         dmMessageId = dm.messageId;
         dmStatus = "sent";

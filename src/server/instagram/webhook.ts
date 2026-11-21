@@ -43,13 +43,17 @@ export function checkVerifyRequest(params: URLSearchParams, expectedToken: strin
 const id = z.union([z.string().min(1), z.number().int()]).transform(String);
 
 /** `value` of a `comments` change. Unknown keys are stripped, not rejected. */
-export const commentValueSchema = z.object({
-  id,
-  text: z.string().optional(),
-  from: z.object({ id, username: z.string().optional() }),
-  media: z.object({ id, media_product_type: z.string().optional() }).optional(),
-  parent_id: id.optional(),
-});
+export const commentValueSchema = z
+  .object({
+    id: id.optional(),
+    comment_id: id.optional(),
+    text: z.string().optional(),
+    from: z.object({ id, username: z.string().optional() }),
+    media: z.object({ id, media_product_type: z.string().optional() }).optional(),
+    parent_id: id.optional(),
+  })
+  .refine((value) => !!(value.comment_id ?? value.id), "Missing comment id")
+  .transform(({ id: legacyId, comment_id, ...value }) => ({ ...value, id: comment_id ?? legacyId! }));
 
 export const webhookPayloadSchema = z.object({
   object: z.string(),

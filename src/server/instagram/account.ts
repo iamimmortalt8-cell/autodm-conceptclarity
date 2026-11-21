@@ -4,7 +4,7 @@ import { z } from "zod";
 import { decrypt, encrypt } from "@/server/crypto";
 import { db, retryable } from "@/server/db/client";
 import { instagramAccounts, type InstagramAccount } from "@/server/db/schema";
-import { IG_REFRESH_TOKEN_URL } from "./constants";
+import { graphAuthForSetup, IG_REFRESH_TOKEN_URL } from "./constants";
 import { graphId, graphRequest } from "./graph";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,7 +25,12 @@ export const getActiveAccount = retryable(
   },
 );
 
-/** Decrypts the account's long-lived access token. Throws if the account was disconnected. */
+/** Per-account Graph host and access-token transport. */
+export function graphOptionsForAccount(account: { apiSetup?: InstagramAccount["apiSetup"] }) {
+  return graphAuthForSetup(account.apiSetup);
+}
+
+/** Decrypts the account's access token. Throws if the account was disconnected. */
 export function getAccessToken(account: Pick<InstagramAccount, "accessTokenEnc">): string {
   if (!account.accessTokenEnc) throw new Error("Instagram account is not connected (no access token)");
   return decrypt(account.accessTokenEnc);
@@ -38,6 +43,9 @@ export interface UpsertAccountInput {
   profilePictureUrl?: string | null;
   accessToken: string;
   expiresInSeconds?: number | null;
+  apiSetup?: "instagram_login" | "unified_login";
+  clientBusinessId?: string | null;
+  loginConfigId?: string | null;
 }
 
 /**
@@ -52,6 +60,9 @@ export async function upsertAccount(input: UpsertAccountInput): Promise<Instagra
     name: input.name ?? null,
     profilePictureUrl: input.profilePictureUrl ?? null,
     accessTokenEnc: encrypt(input.accessToken),
+    apiSetup: input.apiSetup ?? "instagram_login",
+    clientBusinessId: input.clientBusinessId ?? null,
+    loginConfigId: input.loginConfigId ?? null,
     tokenExpiresAt: input.expiresInSeconds ? new Date(now.getTime() + input.expiresInSeconds * 1000) : null,
     tokenRefreshedAt: now,
     isActive: true,
@@ -81,8 +92,11 @@ export async function disconnectAccount(): Promise<void> {
   try {
     await graphRequest({
       method: "DELETE",
-      path: "/me/subscribed_apps",
+      path: account.apiSetup === "unified_login"
+        ? "/" + encodeURIComponent(account.igUserId) + "/subscribed_apps"
+        : "/me/subscribed_apps",
       accessToken: getAccessToken(account),
+      ...graphAuthForSetup(account.apiSetup),
       schema: z.unknown(),
       retries: 0,
       timeoutMs: 5_000,
@@ -143,8 +157,11 @@ export async function listMedia(opts: { limit?: number; after?: string | null } 
   if (!account) throw new Error("No Instagram account connected");
   const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 24), 1), 50);
   const page = await graphRequest({
-    path: "/me/media",
+    path: account.apiSetup === "unified_login"
+      ? "/" + encodeURIComponent(account.igUserId) + "/media"
+      : "/me/media",
     accessToken: getAccessToken(account),
+    ...graphAuthForSetup(account.apiSetup),
     query: {
       fields: "id,caption,media_type,media_product_type,media_url,permalink,thumbnail_url,timestamp",
       limit,
@@ -189,6 +206,14 @@ export async function refreshTokenIfNeeded(
 ): Promise<RefreshResult> {
   const now = opts.now ?? new Date();
   const expiresAt = account.tokenExpiresAt;
+  if (account.apiSetup === "unified_login") {
+    // The supported configuration used by AutoDM is a never-expiring BISU token. Meta's
+    // documented token-management API requires business_management; this app does not request it.
+    if (!expiresAt) return { refreshed: false, expiresAt: null };
+    if (!opts.force && expiresAt.getTime() - now.getTime() >= REFRESH_THRESHOLD_DAYS * DAY_MS)
+      return { refreshed: false, expiresAt };
+    throw new Error("This Unified Login token expires. Reconnect with a never-expiring configuration.");
+  }
   const due = !expiresAt || expiresAt.getTime() - now.getTime() < REFRESH_THRESHOLD_DAYS * DAY_MS;
   if (!opts.force && !due) return { refreshed: false, expiresAt };
 
