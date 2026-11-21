@@ -87,9 +87,10 @@ async function getAppCredentials(): Promise<{ appId: string; appSecret: string; 
 /** Builds the configured Meta login URL. A config ID selects Unified Login. */
 export async function buildAuthorizeUrl(state: string): Promise<string> {
   const { appId, configId } = await getAppCredentials();
+  const redirectUri = oauthRedirectUri();
   const url = new URL(configId ? UNIFIED_LOGIN_URL : IG_AUTHORIZE_URL);
   url.searchParams.set("client_id", appId);
-  url.searchParams.set("redirect_uri", oauthRedirectUri());
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", state);
   if (configId) {
@@ -101,6 +102,12 @@ export async function buildAuthorizeUrl(state: string): Promise<string> {
     url.searchParams.set("enable_fb_login", "0");
     url.searchParams.set("force_reauth", "true");
   }
+  log.info("oauth.authorize_url_built", {
+    loginType: configId ? "unified_login" : "instagram_login",
+    appId,
+    configId: configId ?? null,
+    redirectUri,
+  });
   return url.toString();
 }
 
@@ -145,6 +152,14 @@ async function completeUnifiedOAuth(
   rawCode: string,
   credentials: { appId: string; appSecret: string; configId?: string },
 ): Promise<ConnectResult> {
+  const code = rawCode.replace(/#_.*$/, "").replace(/#.*$/, "");
+  const redirectUri = oauthRedirectUri();
+  log.info("oauth.unified_token_exchange_start", {
+    appId: credentials.appId,
+    configId: credentials.configId ?? null,
+    redirectUri,
+    codeLength: code.length,
+  });
   let token: z.infer<typeof tokenResponseSchema>;
   let clientBusinessId: string;
   let accounts: z.infer<typeof assignedInstagramAccountsSchema>["data"];
@@ -152,9 +167,19 @@ async function completeUnifiedOAuth(
   try {
     token = await graphRequest({
       path: UNIFIED_TOKEN_URL,
-      query: { client_id: credentials.appId, client_secret: credentials.appSecret, code: rawCode },
+      query: {
+        client_id: credentials.appId,
+        client_secret: credentials.appSecret,
+        redirect_uri: redirectUri,
+        code,
+      },
       schema: tokenResponseSchema,
       retries: 0,
+    });
+    log.info("oauth.unified_token_exchange_received", {
+      hasToken: !!token.access_token,
+      expiresIn: token.expires_in ?? null,
+      tokenType: token.token_type ?? null,
     });
     const business = await graphRequest({
       path: "/me",
@@ -172,7 +197,16 @@ async function completeUnifiedOAuth(
       schema: assignedInstagramAccountsSchema,
     });
     accounts = assigned.data;
+    log.info("oauth.unified_accounts_resolved", {
+      clientBusinessId,
+      accountCount: accounts.length,
+      usernames: accounts.map((a) => a.username),
+    });
   } catch (err) {
+    log.warn("oauth.unified_token_exchange_failed", {
+      err: safeErrorMessage(err),
+      redirectUri,
+    });
     throw new OAuthFlowError("token_exchange_failed", err);
   }
   if (accounts.length !== 1) {
@@ -197,7 +231,7 @@ export async function completeOAuth(rawCode: string): Promise<ConnectResult> {
   if (credentials.configId) return completeUnifiedOAuth(rawCode, credentials);
   const { appId, appSecret } = credentials;
   // Instagram appends `#_` to the code in the redirect; strip it if it leaked into the value.
-  const code = rawCode.replace(/#_$/, "");
+  const code = rawCode.replace(/#_.*$/, "").replace(/#.*$/, "");
 
   let longToken: z.infer<typeof tokenResponseSchema>;
   try {
